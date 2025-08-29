@@ -1,0 +1,57 @@
+{% extends "paper_finder/base.html" %}
+{% block head %}
+  {% if auto_refresh %}
+  <meta http-equiv="refresh" content="2">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center mb-3">
+  <h4 class="me-3">任务：{{ job.job_id }}</h4>
+  <span class="badge bg-{{ job.status == 'done' and 'success' or 'secondary' }}">{{ job.status }}</span>
+</div>
+
+{% if job.hints.aff_kw %}
+  <div class="alert alert-secondary py-2">单位关键词：<b>{{ job.hints.aff_kw }}</b></div>
+{% endif %}
+
+<div class="progress mb-3" style="height: 18px;">
+  <div class="progress-bar" role="progressbar"
+       style="width: {{ job.progress|floatformat:2|floatformat:'2' }}%">
+    {{ job.progress|floatformat:2 }}
+  </div>
+</div>
+
+<div class="mb-2">
+  <a class="btn btn-outline-secondary btn-sm" href="">刷新</a>
+  <a class="btn btn-outline-primary btn-sm" href="{% url 'paper_finder:paper_list' %}?job_id={{ job.job_id }}">查看全部结果</a>
+  <a class="btn btn-outline-success btn-sm" href="{% url 'paper_finder:export_csv' %}?job_id={{ job.job_id }}&state=confirmed">导出已确认CSV</a>
+</div>
+
+<h5>最新 50 条：</h5>
+<table class="table table-sm table-striped align-middle">
+  <thead><tr><th>标题</th><th>年份</th><th>来源</th><th>分数</th><th>状态</th><th>操作</th></tr></thead>
+  <tbody>
+  {% for p in papers %}
+    <tr>
+      <td><a href="{{ p.url }}" target="_blank">{{ p.title }}</a></td>
+      <td>{{ p.year|default:"-" }}</td>
+      <td>{{ p.source }}</td>
+      <td>{{ p.score|floatformat:2 }}</td>
+      <td>{{ p.state }}</td>
+      <td>
+        <form method="post" action="{% url 'paper_finder:mark_paper' p.id %}">
+          {% csrf_token %}
+          <div class="btn-group btn-group-sm">
+            <button name="state" value="确认" class="btn btn-success">确认</button>
+            <button name="state" value="不相关" class="btn btn-outline-danger">不相关</button>
+            <button name="state" value="待定" class="btn btn-outline-secondary">待定</button>
+          </div>
+        </form>
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-muted">暂无结果</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

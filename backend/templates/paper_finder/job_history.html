@@ -1,0 +1,94 @@
+{% extends "paper_finder/base.html" %}
+{% block title %}历史检索{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">历史检索</h4>
+  <form class="d-flex" method="get">
+    <input class="form-control me-2" type="search" name="q" placeholder="按姓名/单位搜索" value="{{ q }}">
+    <button class="btn btn-outline-primary">查询</button>
+  </form>
+</div>
+
+<form method="get" action="{% url 'paper_finder:paper_list' %}">
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width:2rem;"></th>
+            <th>时间</th>
+            <th>姓名 / 单位</th>
+            <th>日期范围</th>
+            <th>数据源</th>
+            <th>状态 / 进度</th>
+            <th class="text-end">结果</th>
+            <th class="text-end">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in page_obj.object_list %}
+          <tr>
+            <td>
+              <input type="checkbox" name="jobs" value="{{ job.job_id }}">
+            </td>
+            <td>{{ job.created_at|date:"Y-m-d H:i" }}</td>
+            <td>
+              <div><strong>{{ job.hints.query_name }}</strong>{% if job.hints.pinyin %} <span class="text-muted">({{ job.hints.pinyin }})</span>{% endif %}</div>
+              {% if job.hints.aff_kw %}<div class="text-muted small">单位：{{ job.hints.aff_kw }}</div>{% endif %}
+            </td>
+            <td class="text-muted small">
+              {% with dr=job.hints.date_range %}
+                {% if dr.start or dr.end %}
+                  {{ dr.start|default:"-" }} 〜 {{ dr.end|default:"-" }}
+                {% else %}-{% endif %}
+              {% endwith %}
+            </td>
+            <td class="text-muted small">
+              {% for s in job.hints.sources %}<span class="badge text-bg-light border">{{ s }}</span>{% endfor %}
+            </td>
+            <td>
+              <span class="badge bg-{{ job.status == 'done' and 'success' or 'secondary' }}">{{ job.status }}</span>
+              {% if job.status != 'done' %}
+                <span class="text-muted small ms-1">{{ job.progress|floatformat:2 }}</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <span class="small text-muted">总</span> <b>{{ job.paper_total }}</b>
+              <span class="small text-muted ms-2">确认</span> <b>{{ job.paper_confirmed }}</b>
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary"
+                 href="{% url 'paper_finder:paper_list' %}?job_id={{ job.job_id }}">查看</a>
+              <a class="btn btn-sm btn-outline-success"
+                 href="{% url 'paper_finder:export_csv' %}?job_id={{ job.job_id }}&state=confirmed">导出</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="8" class="text-muted text-center py-4">暂无历史记录</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex justify-content-between align-items-center">
+      <div class="text-muted small">勾选多条后可“对比查看”（合并多个任务结果）。</div>
+      <div>
+        <button class="btn btn-primary">对比查看</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<nav class="mt-3">
+  <ul class="pagination">
+    {% if page_obj.has_previous %}
+      <li class="page-item"><a class="page-link" href="?{% if q %}q={{ q }}&{% endif %}page={{ page_obj.previous_page_number }}">上一页</a></li>
+    {% endif %}
+    <li class="page-item active"><span class="page-link">{{ page_obj.number }}/{{ page_obj.paginator.num_pages }}</span></li>
+    {% if page_obj.has_next %}
+      <li class="page-item"><a class="page-link" href="?{% if q %}q={{ q }}&{% endif %}page={{ page_obj.next_page_number }}">下一页</a></li>
+    {% endif %}
+  </ul>
+</nav>
+
+{% endblock %}

@@ -1,0 +1,123 @@
+{% extends "paper_finder/base.html" %}
+{% load pf_extras %}
+{% block content %}
+    <form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-md-8 col-lg-6">
+    <label class="form-label">历史任务</label>
+    <select class="form-select" name="job_id" onchange="this.form.submit()">
+      {% for j in recent_jobs %}
+        <option value="{{ j.job_id }}" {% if j.job_id == job_id %}selected{% endif %}>
+          {{ j.created_at|date:"Y-m-d H:i" }} · {{ j.hints.query_name }}
+          {% if j.hints.aff_kw %}· {{ j.hints.aff_kw }}{% endif %}
+          · {{ j.status }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+<a class="btn btn-outline-secondary btn-sm"
+   href="{% url 'paper_finder:export_csv' %}?job_id={{ job_id }}">
+  导出 CSV
+</a>
+  {# 保留当前其它筛选条件（可选） #}
+  {% if form.q.value %}<input type="hidden" name="q" value="{{ form.q.value }}">{% endif %}
+  {% if form.state.value %}<input type="hidden" name="state" value="{{ form.state.value }}">{% endif %}
+  {% if form.source.value %}<input type="hidden" name="source" value="{{ form.source.value }}">{% endif %}
+  {% if form.year_from.value %}<input type="hidden" name="year_from" value="{{ form.year_from.value }}">{% endif %}
+  {% if form.year_to.value %}<input type="hidden" name="year_to" value="{{ form.year_to.value }}">{% endif %}
+
+  {# 如果当前在“多任务对比”模式，保留它 #}
+  {% if job_ids %}<input type="hidden" name="jobs" value="{{ job_ids }}">{% endif %}
+</form>
+
+<div class="card mb-3">
+  <div class="card-header">筛选</div>
+  <div class="card-body">
+    <form method="get" class="row g-2">
+        {% if job_id %}<input type="hidden" name="job_id" value="{{ job_id }}">{% endif %}
+        {% if job_ids %}<input type="hidden" name="jobs" value="{{ job_ids }}">{% endif %}
+      <div class="col-md-2"><label class="form-label">任务ID</label>{{ form.job_id }}</div>
+      <div class="col-md-3"><label class="form-label">关键词</label>{{ form.q }}</div>
+      <div class="col-md-2"><label class="form-label">状态</label>{{ form.state }}</div>
+      <div class="col-md-2"><label class="form-label">来源</label>{{ form.source }}</div>
+      <div class="col-md-1"><label class="form-label">年 ≥</label>{{ form.year_from }}</div>
+      <div class="col-md-1"><label class="form-label">年 ≤</label>{{ form.year_to }}</div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button class="btn btn-primary w-100">查询</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<table class="table table-sm align-middle">
+  <thead>
+    <tr>
+      <th>论文题目</th>
+      <th>论文全体作者</th>
+      <th>学术会议或刊物名称</th>
+      <th>出版年份</th>
+      <th>出版月</th>
+      <th>来源</th>
+      <th>状态</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in papers %}
+      <tr>
+        <td style="min-width: 360px;">
+          {% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>
+          {% else %}{{ p.title }}{% endif %}
+        </td>
+        <td>{{ p.authors|join:", " }}</td>
+        <td>{{ p.venue }}</td>
+        <td>{{ p.year }}</td>
+        <td>{% if p.month %}{{ p.month }}{% endif %}</td>
+        <td class="text-uppercase small text-muted">{{ p.source }}</td>
+        <td>
+          <span class="badge bg-{{ p.state|state_badge }}">{{ p.state|state_cn }}</span>
+        </td>
+        <td>
+          <td class="text-nowrap">
+  <form method="post" action="{% url 'paper_finder:mark_paper' p.id %}" class="d-inline">
+    {% csrf_token %}
+    <input type="hidden" name="job_id" value="{{ job_id }}">
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <button class="btn btn-sm btn-success" name="state" value="confirmed">确认</button>
+  </form>
+
+  <form method="post" action="{% url 'paper_finder:mark_paper' p.id %}" class="d-inline">
+    {% csrf_token %}
+    <input type="hidden" name="job_id" value="{{ job_id }}">
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <button class="btn btn-sm btn-outline-secondary" name="state" value="pending">待定</button>
+  </form>
+
+  <form method="post" action="{% url 'paper_finder:mark_paper' p.id %}" class="d-inline">
+    {% csrf_token %}
+    <input type="hidden" name="job_id" value="{{ job_id }}">
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <button class="btn btn-sm btn-outline-danger" name="state" value="rejected">不相关</button>
+  </form>
+</td>
+
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="text-muted">暂无结果</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+
+<nav>
+  <ul class="pagination">
+    {% if page_obj.has_previous %}
+      <li class="page-item"><a class="page-link" href="?{% if request.GET %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.previous_page_number }}">上一页</a></li>
+    {% endif %}
+    <li class="page-item active"><span class="page-link">{{ page_obj.number }}/{{ page_obj.paginator.num_pages }}</span></li>
+    {% if page_obj.has_next %}
+      <li class="page-item"><a class="page-link" href="?{% if request.GET %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.next_page_number }}">下一页</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endblock %}
