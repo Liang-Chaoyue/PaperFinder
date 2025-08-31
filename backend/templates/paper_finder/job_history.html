@@ -48,11 +48,14 @@
               {% for s in job.hints.sources %}<span class="badge text-bg-light border">{{ s }}</span>{% endfor %}
             </td>
             <td>
-              <span class="badge bg-{{ job.status == 'done' and 'success' or 'secondary' }}">{{ job.status }}</span>
+              <span class="badge {% if job.status == 'done' %}bg-success{% else %}bg-secondary{% endif %}">
+                {{ job.status }}
+              </span>
               {% if job.status != 'done' %}
                 <span class="text-muted small ms-1">{{ job.progress|floatformat:2 }}</span>
               {% endif %}
             </td>
+
             <td class="text-end">
               <span class="small text-muted">总</span> <b>{{ job.paper_total }}</b>
               <span class="small text-muted ms-2">确认</span> <b>{{ job.paper_confirmed }}</b>

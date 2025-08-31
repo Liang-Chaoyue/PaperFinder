@@ -45,3 +45,4 @@ server/settings_local.py
 htmlcov/
 .tox/
 .mypy_cache/
+/qodana.yaml

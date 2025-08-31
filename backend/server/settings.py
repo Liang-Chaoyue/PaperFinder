@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    "widget_tweaks",
     'paper_finder',
 ]
 
@@ -131,3 +132,14 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# 登录相关跳转
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "paper_finder:search"   # 登录后跳到你的检索页
+LOGOUT_REDIRECT_URL = "login"
+
+
+# 开发期邮件（找回密码/重设密码时用到）
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+AUTH_PASSWORD_VALIDATORS = []

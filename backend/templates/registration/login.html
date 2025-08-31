@@ -1,0 +1,25 @@
+{% extends "paper_finder/base.html" %}
+{% load widget_tweaks %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5">
+    <h3 class="mb-3">登录</h3>
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      <div class="mb-3">
+        <label class="form-label">用户名</label>
+        {{ form.username|add_class:"form-control" }}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">密码</label>
+        {{ form.password|add_class:"form-control" }}
+      </div>
+      <button class="btn btn-primary w-100">登录</button>
+    </form>
+    <div class="mt-3">
+      没有账号？<a href="{% url 'paper_finder:signup' %}">去注册</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

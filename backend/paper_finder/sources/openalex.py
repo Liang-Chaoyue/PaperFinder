@@ -1,6 +1,10 @@
+# paper_finder/sources/openalex.py
+# -*- coding: utf-8 -*-
+
 import re
 import httpx
 from .base import PaperItem
+
 
 class OpenAlexAdapter:
     source_name = "openalex"
@@ -12,11 +16,14 @@ class OpenAlexAdapter:
     # ---------- 工具：规范化人名做严格匹配 ----------
     @staticmethod
     def _norm(s: str) -> str:
-        # 仅保留字母数字，移除空白/标点/点号/连字符，统一小写
+        # 仅保留字母数字与中日韩统一表意文字，移除空白/标点/点号/连字符，统一小写
         return re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]", "", s or "").lower()
 
     def _author_matches_variant(self, authors: list[str], variant: str) -> bool:
+        """作者列表中是否存在与姓名变体“等值”的名字（规范化后完全相等）"""
         target = self._norm(variant)
+        if not target:
+            return False
         for nm in authors or []:
             if self._norm(nm) == target:
                 return True
@@ -76,7 +83,7 @@ class OpenAlexAdapter:
         }
         filters = []
 
-        # 作者显示名模糊搜索（针对作者字段，不影响题目）
+        # 作者显示名（只作用在作者字段）
         if variant:
             # OpenAlex 支持 authorships.author.display_name.search
             filters.append(f"authorships.author.display_name.search:{variant}")
@@ -86,7 +93,7 @@ class OpenAlexAdapter:
             # OpenAlex 支持 authorships.institutions.display_name.search
             filters.append(f"authorships.institutions.display_name.search:{aff_kw}")
 
-        # 日期（OpenAlex 支持作为顶层 filter 也支持 from_/to_ 参数，使用 filter 更一致）
+        # 日期范围
         if start:
             filters.append(f"from_publication_date:{start}")
         if end:

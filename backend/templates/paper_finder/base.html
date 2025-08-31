@@ -4,33 +4,64 @@
   <meta charset="utf-8">
   <title>{% block title %}论文查询{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   {% block head %}{% endblock %}
 </head>
 <body class="bg-light">
-<nav class="navbar navbar-expand-lg bg-white border-bottom mb-3">
 
-    <div class="navbar-nav">
-      <a class="nav-link" href="{% url 'paper_finder:job_history' %}">历史检索</a>
-      {% if last_job_id %}
-        <a class="nav-link" href="{% url 'paper_finder:paper_list' %}?job_id={{ last_job_id }}">最近结果</a>
-      {% endif %}
-    </div>
-
+<nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-3">
   <div class="container">
+    <!-- 品牌 -->
     <a class="navbar-brand" href="{% url 'paper_finder:search' %}">PaperFinder</a>
-    <div class="navbar-nav">
-      <a class="nav-link" href="{% url 'paper_finder:paper_list' %}">结果列表</a>
+
+    <!-- 汉堡按钮（小屏折叠） -->
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain"
+            aria-controls="navbarMain" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <!-- 折叠内容区域 -->
+    <div class="collapse navbar-collapse" id="navbarMain">
+      <!-- 左侧导航 -->
+      <div class="navbar-nav">
+        <a class="nav-link" href="{% url 'paper_finder:search' %}">发起检索</a>
+        {% if last_job_id %}
+          <a class="nav-link" href="{% url 'paper_finder:paper_list' %}?job_id={{ last_job_id }}">最近结果</a>
+        {% endif %}
+        <a class="nav-link" href="{% url 'paper_finder:paper_list' %}">结果列表</a>
+        <a class="nav-link" href="{% url 'paper_finder:job_history' %}">历史任务</a>
+      </div>
+
+      <!-- 右侧用户区 -->
+      <ul class="navbar-nav ms-auto">
+        {% if user.is_authenticated %}
+          <li class="nav-item"><span class="nav-link">Hi, {{ user.username }}</span></li>
+          <li class="nav-item">
+            <form action="{% url 'logout' %}" method="post" class="d-inline">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-link nav-link p-0">退出</button>
+            </form>
+          </li>
+        {% else %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'login' %}">登录</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'paper_finder:signup' %}">注册</a></li>
+        {% endif %}
+      </ul>
     </div>
   </div>
 </nav>
+
 <div class="container">
   {% block content %}{% endblock %}
 </div>
-  <!-- 悬浮结果按钮 -->
-  <style>.pf-fab{position:fixed;right:24px;bottom:24px;z-index:1050}</style>
-  <a class="btn btn-primary btn-lg rounded-pill shadow pf-fab"
-     href="{% url 'paper_finder:paper_list' %}" title="结果列表">🗂 结果</a>
 
+<!-- 悬浮结果按钮 -->
+<style>.pf-fab{position:fixed;right:24px;bottom:24px;z-index:1050}</style>
+<a class="btn btn-primary btn-lg rounded-pill shadow pf-fab"
+   href="{% url 'paper_finder:paper_list' %}" title="结果列表">🗂 结果</a>
+
+<!-- Bootstrap JS（包含 Popper） -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

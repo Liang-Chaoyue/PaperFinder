@@ -2,6 +2,8 @@ import uuid, time, csv
 from typing import Dict, List, Tuple
 from collections import defaultdict
 
+
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.core.paginator import Paginator
@@ -9,6 +11,8 @@ from django.views.decorators.http import require_POST, require_GET
 from django.urls import reverse
 from django.utils.encoding import smart_str
 from django.db.models import Count
+from django.http import JsonResponse
+from django.db import transaction, IntegrityError
 
 from .services.matching import keep_paper_boolean, aff_hits
 from .services.storage import dedupe_in_memory, save_items
@@ -19,6 +23,8 @@ from .models import SearchJob, Paper
 from .sources.openalex import OpenAlexAdapter
 from .sources.crossref import CrossrefAdapter
 from .sources.arxiv import ArxivAdapter
+from .sources.scholar import ScholarAdapter
+
 
 # Celery 可选
 try:
@@ -28,12 +34,80 @@ except Exception:
     HAS_CELERY = False
 
 
-# --- 适配器注册 ---
 ADAPTERS = {
     "openalex": OpenAlexAdapter(),
-    "crossref": CrossrefAdapter(mailto="youremail@example.com"),
+    "crossref": CrossrefAdapter(mailto="user@example.com"),
     "arxiv": ArxivAdapter(),
+    "scholar": ScholarAdapter(),
 }
+
+# --- 批量解析工具 ---
+import io, csv
+try:
+    from openpyxl import load_workbook  # 如不需要Excel可删
+    HAS_XLSX = True
+except Exception:
+    HAS_XLSX = False
+
+def _parse_names_text(s: str):
+    """
+    每行：姓名[, 拼音][, 单位]
+    """
+    rows = []
+    for raw in (s or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        rows.append({
+            "name": parts[0] if len(parts) >= 1 else "",
+            "pinyin": parts[1] if len(parts) >= 2 else "",
+            "affiliation": parts[2] if len(parts) >= 3 else "",
+        })
+    return [r for r in rows if r["name"]]
+
+def _parse_csv(fileobj):
+    content = fileobj.read()
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "gbk"):
+        try:
+            text = content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise ValueError("CSV 编码无法识别，请使用 UTF-8。")
+    reader = csv.DictReader(io.StringIO(text))
+    out = []
+    for r in reader:
+        out.append({
+            "name": (r.get("name") or "").strip(),
+            "pinyin": (r.get("pinyin") or "").strip(),
+            "affiliation": (r.get("affiliation") or "").strip(),
+            "start_date": (r.get("start_date") or "").strip(),
+            "end_date": (r.get("end_date") or "").strip(),
+        })
+    return [x for x in out if x["name"]]
+
+def _parse_excel(fileobj):
+    if not HAS_XLSX:
+        raise ValueError("缺少 openpyxl 依赖，无法解析 Excel")
+    wb = load_workbook(filename=io.BytesIO(fileobj.read()), data_only=True)
+    ws = wb.active
+    headers = [(c.value or "").strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    def idx(col): return headers.index(col) if col in headers else None
+    i_name = idx("name"); i_py = idx("pinyin"); i_aff = idx("affiliation"); i_s = idx("start_date"); i_e = idx("end_date")
+    out = []
+    for row in ws.iter_rows(min_row=2):
+        def get(i):
+            if i is None: return ""
+            v = row[i].value
+            return (str(v).strip()) if v is not None else ""
+        item = {"name": get(i_name), "pinyin": get(i_py), "affiliation": get(i_aff),
+                "start_date": get(i_s), "end_date": get(i_e)}
+        if item["name"]:
+            out.append(item)
+    return out
 
 
 # === 内部工具：把姓名变体结果统一成 [(priority:int, text:str)] ===
@@ -64,59 +138,151 @@ def _normalize_variants(raw) -> List[Tuple[int, str]]:
     return pairs
 
 
-# === 内部：将一个 item 写入 Paper（按 job_id 去重更新）===
-def upsert_paper(item: dict, task_ref: str, hints: dict):
+def normalize_doi(doi: str | None) -> str | None:
+    if not doi:
+        return None
+    d = doi.strip()
+    d = d.replace("https://doi.org/", "").replace("http://doi.org/", "")
+    return d.lower()
+
+@transaction.atomic
+def upsert_paper(item, task_ref=None, hints=None):
     """
-    期望 item 字段（适配器应已规范化）：
-    title:str, authors:list[str], venue:str, year:int|None, month:int|None,
-    doi:str|None, url:str|None, source:str, score:float|None
+    item: 一条论文字典，如 {"title":..., "doi":..., "year":..., "authors":..., "source":..., "source_id":...}
     """
-    title = (item.get("title") or "").strip()
-    source = (item.get("source") or "").strip() or "unknown"
-    doi = (item.get("doi") or "").strip().lower() or None
-    url = (item.get("url") or "").strip() or None
-    year = item.get("year")
-    month = item.get("month")
-    authors = item.get("authors") or []
-    venue = item.get("venue") or ""
-    score = item.get("score", 0.0)
+    doi = normalize_doi(item.get("doi"))
 
-    # 兜底格式化
-    try:
-        month = int(month) if month not in (None, "") else None
-    except Exception:
-        month = None
-    try:
-        year = int(year) if year not in (None, "") else None
-    except Exception:
-        year = None
-
-    # 查重键：优先 job+doi；否则 job+title+source
-    if doi:
-        lookup = {"task_ref": task_ref, "doi": doi}
-    else:
-        lookup = {"task_ref": task_ref, "title": title, "source": source}
-
+    # 统一准备 defaults（不要把用于 lookup 的字段再重复放进 defaults 里造成混淆）
     defaults = {
-        "title": title,
-        "authors": authors,
-        "venue": venue,
-        "year": year,
-        "month": month,
-        "doi": doi,
-        "url": url,
-        "source": source,
-        "score": score or 0.0,
+        "title": item.get("title") or "",
+        "year": item.get("year"),
+        "authors": item.get("authors", ""),
+        "source": item.get("source", ""),
+        # 你模型的其他字段也在这里补齐
+        # "abstract": item.get("abstract", ""),
+        # "venue": item.get("venue", ""),
     }
-    Paper.objects.update_or_create(defaults=defaults, **lookup)
 
+    try:
+        if doi:
+            # ① 有 DOI：用 DOI 作为唯一查找键
+            obj, created = Paper.objects.update_or_create(
+                doi=doi,
+                defaults=defaults,
+            )
+        else:
+            # ② 没 DOI：退回到你的“来源唯一键”（示例用 source+source_id）
+            #    如果你没有 source_id，请改成你自己的指纹/唯一键
+            source = item.get("source") or ""
+            source_id = item.get("source_id") or ""
+            if not source_id:
+                # 还可以选择使用 fingerprint(title+year+第一作者) 作为兜底唯一键
+                # 这里给个最简单的兜底，避免写入完全不可判重的记录
+                source_id = f"no-doi::{(item.get('title') or '').strip().lower()}::{item.get('year') or ''}"
+            obj, created = Paper.objects.update_or_create(
+                source=source,
+                source_id=source_id,
+                defaults=defaults | {"doi": None},  # 没 DOI 就显式存 None
+            )
+
+    except IntegrityError:
+        # ③ 兜底：大概率是并发/历史脏数据导致的 DOI 冲突
+        if doi:
+            obj = Paper.objects.get(doi=doi)
+            # 用 defaults 更新已有记录
+            for k, v in defaults.items():
+                setattr(obj, k, v)
+            obj.save(update_fields=list(defaults.keys()))
+        else:
+            raise
+
+    return obj
 
 def search_page(request):
     if request.method == "POST":
-        form = SearchForm(request.POST)
-        action = request.POST.get("action", "search")  # ✅ 提前定义，避免 NameError
+        # ① 注意要传入 request.FILES
+        form = SearchForm(request.POST, request.FILES)
+        action = request.POST.get("action", "search")
         if form.is_valid():
-            # 读取表单
+            # ---- 先判断是否批量 ----
+            names_text = form.cleaned_data.get("names_text")
+            names_file = request.FILES.get("names_file")
+
+            if names_text or names_file:
+                # 解析
+                rows = []
+                if names_text:
+                    rows += _parse_names_text(names_text)
+                if names_file:
+                    fname = (names_file.name or "").lower()
+                    names_file.seek(0)
+                    if fname.endswith(".csv"):
+                        rows += _parse_csv(names_file)
+                    elif fname.endswith(".xlsx") or fname.endswith(".xlsm"):
+                        rows += _parse_excel(names_file)
+                    else:
+                        # 默认按 CSV 尝试
+                        rows += _parse_csv(names_file)
+
+                # 套用“默认值”（来自表单的 default_* 字段）
+                def_aff = form.cleaned_data.get("default_affiliation") or ""
+                def_start = form.cleaned_data.get("default_start_date")
+                def_end   = form.cleaned_data.get("default_end_date")
+                for r in rows:
+                    r["affiliation"] = r.get("affiliation") or def_aff
+                    r["start_date"]  = r.get("start_date") or def_start
+                    r["end_date"]    = r.get("end_date") or def_end
+
+                # 去重（按 name+pinyin+aff）
+                seen, uniq = set(), []
+                for r in rows:
+                    key = (r["name"], r.get("pinyin",""), r.get("affiliation",""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    uniq.append(r)
+
+                # 为批量中每个姓名创建一个独立 SearchJob，并触发检索
+                sources = form.cleaned_data["sources"]
+                run_sync = form.cleaned_data.get("run_sync")
+
+                created_job_ids = []
+                for r in uniq:
+                    name   = r["name"].strip()
+                    pinyin = (r.get("pinyin") or "").strip() or None
+                    sd = r.get("start_date")
+                    ed = r.get("end_date")
+                    aff_kw = (r.get("affiliation") or "").strip()
+                    hints = {
+                        "sources": sources,
+                        "query_name": name,
+                        "pinyin": pinyin,
+                        "aff_kw": aff_kw or None,
+                        "date_range": {
+                            "start": sd.isoformat() if hasattr(sd, "isoformat") else (sd or None),
+                            "end":   ed.isoformat() if hasattr(ed, "isoformat") else (ed or None),
+                        },
+                    }
+                    job_id = uuid.uuid4().hex[:16]
+                    SearchJob.objects.create(job_id=job_id, hints=hints, status="running", progress=0.0)
+                    created_job_ids.append(job_id)
+
+                    if run_sync or not HAS_CELERY:
+                        # 同步：逐个名字跑
+                        _run_search_once(job_id, name, pinyin, hints, max_variants=8, pause=0.6)
+                    else:
+                        # 异步：投 Celery
+                        run_job_async.delay(job_id, name, hints, pinyin_override=pinyin)
+
+                # 记录最近一个
+                if created_job_ids:
+                    request.session["last_job_id"] = created_job_ids[-1]
+
+                # 跳到“历史任务”或直接到结果页（任选其一）
+                return redirect("paper_finder:job_history")
+                # 或：return redirect(f"{reverse('paper_finder:paper_list')}?job_id={created_job_ids[-1]}")
+
+            # ---- 否则走“单人检索”原逻辑 ----
             name   = form.cleaned_data["name"].strip()
             pinyin = (form.cleaned_data["pinyin"] or "").strip() or None
             sources = form.cleaned_data["sources"]
@@ -124,7 +290,6 @@ def search_page(request):
             ed = form.cleaned_data.get("end_date")
             aff_kw = (form.cleaned_data.get("affiliation") or "").strip()
 
-            # 组装 hints（历史/导出/适配器都用它）
             hints: Dict = {
                 "sources": sources,
                 "query_name": name,
@@ -136,11 +301,9 @@ def search_page(request):
                 },
             }
 
-            # ✅ 预览姓名变体
             if action == "preview":
                 raw = generate_variants(name, pinyin_override=pinyin)
                 pairs = _normalize_variants(raw)
-                # 分组供模板展示
                 groups = defaultdict(list)
                 for pri, text in pairs:
                     groups[int(pri)].append(text)
@@ -156,11 +319,10 @@ def search_page(request):
                     ],
                 })
 
-            # ✅ 发起检索
             run_sync = form.cleaned_data.get("run_sync")
             job_id = uuid.uuid4().hex[:16]
             SearchJob.objects.create(job_id=job_id, hints=hints, status="running", progress=0.0)
-            request.session["last_job_id"] = job_id  # 记录最近一次
+            request.session["last_job_id"] = job_id
 
             if run_sync or not HAS_CELERY:
                 _run_search_once(job_id, name, pinyin, hints, max_variants=8, pause=0.6)
@@ -168,7 +330,8 @@ def search_page(request):
             else:
                 run_job_async.delay(job_id, name, hints, pinyin_override=pinyin)
                 return redirect("paper_finder:job_status", job_id=job_id)
-        # 表单校验失败 → 回显错误
+
+        # 表单校验失败
         return render(request, "paper_finder/search.html", {"form": form})
     else:
         form = SearchForm()
@@ -183,7 +346,7 @@ def job_status(request, job_id: str):
         "job": job, "papers": papers, "auto_refresh": auto_refresh
     })
 
-
+@login_required
 def paper_list(request):
     job_id = request.GET.get("job_id")
 
@@ -399,3 +562,42 @@ def export_job_csv(request):
             smart_str(p.url or ""),
         ])
     return resp
+
+def job_status(request, job_id: str):
+    job = get_object_or_404(SearchJob, pk=job_id)
+    papers = Paper.objects.filter(task_ref=job_id).order_by("-score", "-year")[:50]
+    auto_refresh = (job.status == "running")
+    job_percent = int(round(100 * float(job.progress or 0)))  # ✅ 计算百分比，避免模板里做运算
+    return render(request, "paper_finder/job_status.html", {
+        "job": job,
+        "papers": papers,
+        "auto_refresh": auto_refresh,
+        "job_percent": job_percent,  # ✅ 传给模板
+    })
+
+@require_GET
+def job_progress(request, job_id: str):
+    """轮询接口：返回当前任务进度（0~1）与状态"""
+    job = get_object_or_404(SearchJob, pk=job_id)
+    pct = int(round(100 * float(job.progress or 0)))
+    return JsonResponse({
+        "job_id": job.job_id,
+        "status": job.status,            # 例如 running / done / failed
+        "progress": float(job.progress or 0),
+        "percent": pct,                  # 0~100 的整数
+    })
+
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import login as auth_login
+from django.shortcuts import render, redirect
+
+def signup(request):
+    if request.method == "POST":
+        form = UserCreationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            auth_login(request, user)
+            return redirect("paper_finder:search")   # 登录后去检索页
+    else:
+        form = UserCreationForm()
+    return render(request, "registration/signup.html", {"form": form})

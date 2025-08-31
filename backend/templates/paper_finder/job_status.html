@@ -1,57 +1,159 @@
 {% extends "paper_finder/base.html" %}
+
 {% block head %}
-  {% if auto_refresh %}
-  <meta http-equiv="refresh" content="2">
-  {% endif %}
+  <style>
+    .badge-state-confirmed { background-color: #198754; }   /* 绿色 */
+    .badge-state-pending   { background-color: #6c757d; }   /* 灰色 */
+    .badge-state-rejected  { background-color: #dc3545; }   /* 红色 */
+  </style>
 {% endblock %}
+
 {% block content %}
+
 <div class="d-flex align-items-center mb-3">
   <h4 class="me-3">任务：{{ job.job_id }}</h4>
-  <span class="badge bg-{{ job.status == 'done' and 'success' or 'secondary' }}">{{ job.status }}</span>
+  {% if job.status == "done" %}
+    <span class="badge bg-success">done</span>
+  {% elif job.status == "running" %}
+    <span class="badge bg-info text-dark">running</span>
+  {% else %}
+    <span class="badge bg-secondary">{{ job.status }}</span>
+  {% endif %}
 </div>
 
 {% if job.hints.aff_kw %}
-  <div class="alert alert-secondary py-2">单位关键词：<b>{{ job.hints.aff_kw }}</b></div>
+  <div class="alert alert-secondary py-2">
+    单位关键词：<b>{{ job.hints.aff_kw }}</b>
+  </div>
 {% endif %}
 
-<div class="progress mb-3" style="height: 18px;">
-  <div class="progress-bar" role="progressbar"
-       style="width: {{ job.progress|floatformat:2|floatformat:'2' }}%">
-    {{ job.progress|floatformat:2 }}
+<!-- 进度条 -->
+<div id="progress-wrap" class="mb-3" {% if job.status != 'running' %}style="display:none"{% endif %}>
+  <div class="d-flex justify-content-between mb-1">
+    <strong>检索进度</strong>
+    <span id="progress-text">
+      {% if job_percent is not None %}{{ job_percent }}{% else %}{{ job.progress|default:0|floatformat:2 }}{% endif %}%
+    </span>
   </div>
+  <div class="progress" style="height: 18px;">
+    <div id="progress-bar"
+         class="progress-bar progress-bar-striped progress-bar-animated"
+         role="progressbar"
+         style="width:{% if job_percent is not None %}{{ job_percent }}{% else %}{{ job.progress|default:0|floatformat:2 }}{% endif %}%"
+         aria-valuenow="{% if job_percent is not None %}{{ job_percent }}{% else %}{{ job.progress|default:0|floatformat:2 }}{% endif %}"
+         aria-valuemin="0" aria-valuemax="100">
+    </div>
+  </div>
+  <small class="text-muted">状态：<span id="job-status">{{ job.status }}</span></small>
 </div>
 
 <div class="mb-2">
-  <a class="btn btn-outline-secondary btn-sm" href="">刷新</a>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ request.get_full_path }}">刷新</a>
   <a class="btn btn-outline-primary btn-sm" href="{% url 'paper_finder:paper_list' %}?job_id={{ job.job_id }}">查看全部结果</a>
-  <a class="btn btn-outline-success btn-sm" href="{% url 'paper_finder:export_csv' %}?job_id={{ job.job_id }}&state=confirmed">导出已确认CSV</a>
+  <a class="btn btn-outline-success btn-sm" href="{% url 'paper_finder:export_csv' %}?job_id={{ job.job_id }}&state=confirmed">导出已确认 CSV</a>
 </div>
 
 <h5>最新 50 条：</h5>
 <table class="table table-sm table-striped align-middle">
-  <thead><tr><th>标题</th><th>年份</th><th>来源</th><th>分数</th><th>状态</th><th>操作</th></tr></thead>
+  <thead>
+    <tr>
+      <th style="min-width:360px;">标题</th>
+      <th>作者</th>
+      <th>期刊/会议</th>
+      <th>年份</th>
+      <th>月份</th>
+      <th>来源</th>
+      <th>状态</th>
+      <th>操作</th>
+    </tr>
+  </thead>
   <tbody>
   {% for p in papers %}
     <tr>
-      <td><a href="{{ p.url }}" target="_blank">{{ p.title }}</a></td>
+      <td>
+        {% if p.url %}
+          <a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>
+        {% else %}
+          {{ p.title }}
+        {% endif %}
+      </td>
+      <td>{{ p.authors|default_if_none:list|join:", " }}</td>
+      <td>{{ p.venue }}</td>
       <td>{{ p.year|default:"-" }}</td>
-      <td>{{ p.source }}</td>
-      <td>{{ p.score|floatformat:2 }}</td>
-      <td>{{ p.state }}</td>
+      <td>{% if p.month %}{{ p.month }}{% endif %}</td>
+      <td class="text-uppercase small text-muted">{{ p.source }}</td>
+      <td>
+        {% if p.state == "confirmed" %}
+          <span class="badge badge-state-confirmed">确认</span>
+        {% elif p.state == "rejected" %}
+          <span class="badge badge-state-rejected">不相关</span>
+        {% else %}
+          <span class="badge badge-state-pending">待定</span>
+        {% endif %}
+      </td>
       <td>
         <form method="post" action="{% url 'paper_finder:mark_paper' p.id %}">
           {% csrf_token %}
+          <!-- 回跳到当前任务页 -->
+          <input type="hidden" name="job_id" value="{{ job.job_id }}">
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <div class="btn-group btn-group-sm">
-            <button name="state" value="确认" class="btn btn-success">确认</button>
-            <button name="state" value="不相关" class="btn btn-outline-danger">不相关</button>
-            <button name="state" value="待定" class="btn btn-outline-secondary">待定</button>
+            <button type="submit" name="state" value="confirmed" class="btn btn-success">确认</button>
+            <button type="submit" name="state" value="rejected" class="btn btn-outline-danger">不相关</button>
+            <button type="submit" name="state" value="pending"   class="btn btn-outline-secondary">待定</button>
           </div>
         </form>
       </td>
     </tr>
   {% empty %}
-    <tr><td colspan="6" class="text-muted">暂无结果</td></tr>
+    <tr><td colspan="8" class="text-muted">暂无结果</td></tr>
   {% endfor %}
   </tbody>
 </table>
+
+{% if job.status == 'running' %}
+<script>
+(function () {
+  const wrap   = document.getElementById('progress-wrap');
+  const bar    = document.getElementById('progress-bar');
+  const text   = document.getElementById('progress-text');
+  const status = document.getElementById('job-status');
+
+  function clamp(x){ x = Math.round(x); return Math.max(0, Math.min(100, x)); }
+
+  // 初始化一次（兼容服务端没传 job_percent 的情况）
+  (function init() {
+    var serverPct = {{ job_percent|default:"0" }};
+    var pct = serverPct || Math.round(({{ job.progress|default:"0" }} * 100));
+    pct = clamp(pct);
+    bar.style.width = pct + "%";
+    bar.setAttribute("aria-valuenow", pct);
+    text.textContent = pct + "%";
+  })();
+
+  function tick() {
+    fetch("{% url 'paper_finder:job_progress' job.job_id %}")
+      .then(r => r.json())
+      .then(d => {
+        const pct = clamp(d.percent ?? (d.progress * 100));
+        bar.style.width = pct + "%";
+        bar.setAttribute("aria-valuenow", pct);
+        text.textContent = pct + "%";
+        status.textContent = d.status;
+
+        if (d.status === "done" || pct >= 100) {
+          wrap.style.display = "none";
+          clearInterval(timer);
+          // 完成后跳到列表页查看全部结果（也可改成 location.reload();）
+          window.location.href = "{% url 'paper_finder:paper_list' %}?job_id={{ job.job_id }}";
+        }
+      })
+      .catch(() => { /* 忽略单次失败 */ });
+  }
+
+  const timer = setInterval(tick, 1200);
+})();
+</script>
+{% endif %}
+
 {% endblock %}

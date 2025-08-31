@@ -1,0 +1,37 @@
+{# templates/registration/signup.html #}
+{% extends "paper_finder/base.html" %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5">
+    <h3 class="mb-3">注册</h3>
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      {{ form.non_field_errors }}
+
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.username.id_for_label }}">用户名</label>
+        {{ form.username|add_class:"form-control"|attr:"placeholder:用户名" }}
+        {% if form.username.errors %}<div class="invalid-feedback d-block">{{ form.username.errors.0 }}</div>{% endif %}
+        <div class="form-text">只能包含字母、数字和 @/./+/-/_</div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.password1.id_for_label }}">密码</label>
+        {{ form.password1|add_class:"form-control" }}
+        {% if form.password1.errors %}<div class="invalid-feedback d-block">{{ form.password1.errors.0 }}</div>{% endif %}
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.password2.id_for_label }}">确认密码</label>
+        {{ form.password2|add_class:"form-control" }}
+        {% if form.password2.errors %}<div class="invalid-feedback d-block">{{ form.password2.errors.0 }}</div>{% endif %}
+      </div>
+
+      <button class="btn btn-primary w-100" type="submit">注册</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

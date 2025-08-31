@@ -18,6 +18,7 @@ from django.contrib import admin
 from django.urls import path,include
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path("", include("paper_finder.urls")),
+    path("admin/", admin.site.urls),
+    path("", include("paper_finder.urls")),          # 业务路由
+    path("accounts/", include("django.contrib.auth.urls")),  # 登录/登出/密码相关
 ]

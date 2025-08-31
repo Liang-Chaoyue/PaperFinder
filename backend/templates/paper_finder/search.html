@@ -1,83 +1,137 @@
 {% extends "paper_finder/base.html" %}
 {% block title %}发起检索{% endblock %}
 {% block content %}
+
 <div class="card">
-  <div class="card-header">发起检索</div>
+  <div class="card-header">发起检索 / 批量导入</div>
   <div class="card-body">
-    <form method="post" class="row g-3">
+
+    {# 全局表单错误 #}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">
+        {% for e in form.non_field_errors %}<div>{{ e }}</div>{% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="row g-3" id="search-form">
       {% csrf_token %}
+
+      <!-- 单人检索（与批量导入二选一） -->
+      <h5 class="mt-2">单人检索</h5>
       <div class="col-md-6">
         <label class="form-label">{{ form.name.label }}</label>
         {{ form.name }}
+        {% if form.name.errors %}<div class="invalid-feedback d-block">{{ form.name.errors.0 }}</div>{% endif %}
       </div>
       <div class="col-md-6">
         <label class="form-label">{{ form.pinyin.label }}</label>
         {{ form.pinyin }}
+        {% if form.pinyin.errors %}<div class="invalid-feedback d-block">{{ form.pinyin.errors.0 }}</div>{% endif %}
         <div class="form-text">{{ form.pinyin.help_text }}</div>
       </div>
 
-        <div class="col-md-3">
-          <label class="form-label">{{ form.start_date.label }}</label>
-          {{ form.start_date }}
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">{{ form.end_date.label }}</label>
-          {{ form.end_date }}
-        </div>
+      <div class="col-md-3">
+        <label class="form-label">{{ form.start_date.label }}</label>
+        {{ form.start_date }}
+        {% if form.start_date.errors %}<div class="invalid-feedback d-block">{{ form.start_date.errors.0 }}</div>{% endif %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">{{ form.end_date.label }}</label>
+        {{ form.end_date }}
+        {% if form.end_date.errors %}<div class="invalid-feedback d-block">{{ form.end_date.errors.0 }}</div>{% endif %}
+      </div>
 
-        <div class="col-md-6">
-          <label class="form-label">{{ form.affiliation.label }}</label>
-          {{ form.affiliation }}
-          <div class="form-text">{{ form.affiliation.help_text }}</div>
-        </div>
-
+      <div class="col-md-6">
+        <label class="form-label">{{ form.affiliation.label }}</label>
+        {{ form.affiliation }}
+        {% if form.affiliation.errors %}<div class="invalid-feedback d-block">{{ form.affiliation.errors.0 }}</div>{% endif %}
+        <div class="form-text">{{ form.affiliation.help_text }}</div>
+      </div>
 
       <div class="col-md-12">
-          <label class="form-label">{{ form.sources.label }}</label>
+        <label class="form-label">{{ form.sources.label }}</label>
+        <div class="d-flex flex-wrap gap-3">
           {{ form.sources }}
-          <div class="mt-2">
-            <a class="btn btn-outline-primary btn-sm"
-               href="{% url 'paper_finder:paper_list' %}">
-              📄 查看结果列表
-            </a>
-          </div>
+        </div>
+        {% if form.sources.errors %}<div class="invalid-feedback d-block">{{ form.sources.errors.0 }}</div>{% endif %}
+
+        <div class="mt-2">
+          <a class="btn btn-outline-primary btn-sm" href="{% url 'paper_finder:paper_list' %}">
+            📄 查看结果列表
+          </a>
+        </div>
       </div>
 
       <div class="col-md-12 form-check">
         {{ form.run_sync }} <label class="form-check-label">{{ form.run_sync.label }}</label>
-        <div class="form-text">{{ form.run_sync.help_text }}</div>
+        {% if form.run_sync.errors %}<div class="invalid-feedback d-block">{{ form.run_sync.errors.0 }}</div>{% endif %}
       </div>
 
       <div class="col-md-12 d-flex gap-2">
-         <button class="btn btn-primary" type="submit" name="action" value="search">开始检索</button>
+        <button class="btn btn-primary" type="submit" name="action" value="search">开始检索</button>
         <button class="btn btn-outline-secondary" type="submit" name="action" value="preview">预览姓名变体</button>
       </div>
+
+      {# 预览区：由视图在 action=preview 返回 #}
+      {% if variant_groups %}
+        <div class="col-12">
+          <hr class="mt-2">
+          <h5>生成的姓名变体（{{ variant_count }} 个）</h5>
+          <div class="text-muted small mb-2">P0=核心，P1=常用，P2=扩展，P3=低优先</div>
+
+          {% for prio, items in variant_groups %}
+            {% if items %}
+              <div class="mb-2">
+                <div class="fw-bold mb-1">P{{ prio }}</div>
+                <div class="d-flex flex-wrap gap-2">
+                  {% for v in items %}
+                    <span class="badge text-bg-light border px-2 py-2">{{ v }}</span>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <hr class="my-4">
+
+      <!-- 批量导入（与单人检索二选一） -->
+      <h5>批量导入</h5>
+
+      <div class="col-12">
+        <label class="form-label">批量姓名（每行一个，逗号分隔：姓名[, 拼音][, 单位]）</label>
+        {{ form.names_text }}
+        {% if form.names_text.errors %}<div class="invalid-feedback d-block">{{ form.names_text.errors.0 }}</div>{% endif %}
+        <div class="form-text">示例：张三, zhang san, 北京邮电大学；每行一条，拼音与单位可省略。</div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">或上传 CSV/Excel</label>
+        {{ form.names_file }}
+        {% if form.names_file.errors %}<div class="invalid-feedback d-block">{{ form.names_file.errors.0 }}</div>{% endif %}
+        <div class="form-text">列名：name, pinyin, affiliation, start_date, end_date；支持 .csv / .xlsx</div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">默认单位关键词（批量）</label>
+        {{ form.default_affiliation }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">默认起始日期（批量）</label>
+        {{ form.default_start_date }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">默认截止日期（批量）</label>
+        {{ form.default_end_date }}
+      </div>
+
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit" name="action" value="search">开始导入</button>
+        <a class="btn btn-outline-secondary" href="{% url 'paper_finder:job_history' %}">查看历史任务</a>
+      </div>
     </form>
-
-    {% if variant_groups %}
-      <hr class="mt-2">
-      <h5>生成的姓名变体（{{ variant_count }} 个）</h5>
-      <div class="text-muted small mb-2">P0=核心，P1=常用，P2=扩展，P3=低优先</div>
-
-      {% for prio, items in variant_groups %}
-        {% if items %}
-          <div class="mb-2">
-            <div class="fw-bold mb-1">P{{ prio }}</div>
-            <div class="d-flex flex-wrap gap-2">
-              {% for v in items %}
-                <span class="badge text-bg-light border px-2 py-2">
-                  {{ v }}
-                  {% if v.tags and v.tags|length %}
-                    <span class="text-muted ms-1 small">({{ v.tags|join:", " }})</span>
-                  {% endif %}
-                </span>
-              {% endfor %}
-            </div>
-          </div>
-        {% endif %}
-      {% endfor %}
-    {% endif %}
-
   </div>
 </div>
+
 {% endblock %}
